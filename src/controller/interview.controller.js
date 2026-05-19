@@ -14,9 +14,12 @@ async function generateInterViewReportController(req, res) {
             return res.status(400).json({ message: "Resume file is required" });
         }
 
-        const parser = new pdfParse.PDFParse(new Uint8Array(req.file.buffer));
-        const resumeContentRaw = await parser.getText();
-        const resumeContent = Array.isArray(resumeContentRaw) ? resumeContentRaw.join(" ") : String(resumeContentRaw);
+        // pdf-parse v2 API: pass buffer in constructor options, getText() returns { text, pages }
+        const { PDFParse } = require("pdf-parse");
+        const parser = new PDFParse({ verbosity: 0, data: req.file.buffer });
+        const pdfResult = await parser.getText();
+        const resumeContent = pdfResult.text || "";
+
         const { selfDescription, jobDescription } = req.body
 
         if (!jobDescription) {
@@ -116,6 +119,12 @@ async function generateResumePdfController(req, res) {
         }
 
         const { resume, jobDescription, selfDescription } = interviewReport
+
+        if (!resume || resume.trim() === "" || resume === "[object Object]") {
+            return res.status(400).json({
+                message: "This report has corrupt resume data. Please create a new analysis by re-uploading your resume."
+            })
+        }
 
         const pdfBuffer = await generateResumePdf({ resume, jobDescription, selfDescription })
 

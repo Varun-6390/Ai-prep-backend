@@ -116,33 +116,57 @@ async function generatePdfFromHtml(htmlContent) {
 
 async function generateResumePdf({ resume, selfDescription, jobDescription }) {
 
-    const resumePdfSchema = z.object({
-        html: z.string().describe("The HTML content of the resume which can be converted to PDF using any library like puppeteer")
-    })
+    const prompt = `You are an expert resume writer and ATS optimization specialist.
 
-    const prompt = `Generate a professional, ATS-friendly resume for a candidate with the following details:
-                        Resume Content: ${resume}
-                        Self Description: ${selfDescription}
-                        Job Description: ${jobDescription}
+Your task: Generate a single-page, ATS-optimized resume in pure HTML that will be rendered to PDF via Puppeteer (A4 size).
 
-                        The response MUST be a JSON object with a single field "html".
-                        The "html" field should contain a FULL HTML document (including <!DOCTYPE html>, <html>, <head> with CSS styles, and <body>).
-                        
-                        Design requirements:
-                        1. Use clean, modern typography (sans-serif fonts).
-                        2. Professional color scheme (dark grays, subtle blue accents).
-                        3. Clear sections: Contact Information, Summary, Experience, Education, Skills.
-                        4. Tailor the content to the Job Description, highlighting relevant achievements.
-                        5. Ensure it looks premium and well-formatted when printed to PDF.
-                        
-                        Return ONLY the JSON object: { "html": "...full html content..." }`
+=== CANDIDATE DATA ===
+Resume (source of truth – use ONLY this information, do NOT invent any details):
+${resume}
+
+Self Description (use to enrich the professional summary section only):
+${selfDescription || "Not provided"}
+
+Target Job Description (use to extract and highlight keywords):
+${jobDescription}
+
+=== STRICT RULES ===
+1. NEVER invent, fabricate, or assume any information not present in the provided resume content.
+2. If a section (e.g. LinkedIn, GitHub, phone) is not in the provided resume, omit it entirely.
+3. Extract relevant keywords/skills/tools from the Job Description. Wherever these keywords appear in the resume content, wrap them in <span class="keyword">...</span>.
+4. Use the exact job titles, company names, dates, and accomplishments from the provided resume.
+5. The entire resume MUST fit on a single A4 page (no scrolling, no page overflow). Use tight but readable spacing.
+6. The output must be PURE HTML only — no markdown, no code fences, no explanations.
+
+=== HTML/CSS REQUIREMENTS ===
+- Full HTML document: <!DOCTYPE html>, <html>, <head> (with all CSS inside <style>), <body>.
+- Page size: A4 (210mm × 297mm). Set: html, body { width: 210mm; max-height: 297mm; margin: 0; padding: 0; overflow: hidden; }
+- Margins: 12mm on all sides via padding on a wrapper div.
+- Font: 'Segoe UI', Arial, sans-serif. Base font-size: 10pt.
+- Color palette:
+    • Headings / name: #1a1a2e (very dark navy)
+    • Accent / keyword highlight: #2563eb (blue-600)
+    • Body text: #374151 (gray-700)
+    • Section rule lines: #e5e7eb (gray-200)
+    • Background: #ffffff
+- Keyword spans: .keyword { color: #2563eb; font-weight: 600; }
+- Layout: single column OR two-column (left narrow sidebar for contact/skills, right main content) — whichever fits better on one page.
+- Section headers: uppercase, letter-spacing: 0.08em, font-size: 7.5pt, color: #2563eb, border-bottom: 1px solid #e5e7eb, margin-bottom: 4pt.
+- Name: font-size: 18pt, font-weight: 700, color: #1a1a2e.
+- Job title / tagline: font-size: 10pt, color: #4b5563.
+- Bullet points: use "▸" character, margin-left: 10pt, tight line-height (1.3).
+- Dates: float right, font-size: 8.5pt, color: #6b7280.
+- ATS compatibility: use semantic tags (<h1> for name, <h2> for sections, <ul><li> for bullets). No tables for layout, no images, no icons.
+- Do NOT use external fonts or external URLs. All CSS inline in <style>.
+
+Return ONLY the complete HTML document. Nothing else.`;
 
     try {
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
-                responseMimeType: "application/json",
+                responseMimeType: "text/plain",
             }
         })
 
@@ -155,14 +179,18 @@ async function generateResumePdf({ resume, selfDescription, jobDescription }) {
             text = response.text || "";
         }
 
-        const cleanedText = text.replace(/```json\n?/, "").replace(/```\n?/, "").trim();
-        const jsonContent = JSON.parse(cleanedText);
+        // Strip any accidental markdown code fences
+        const htmlContent = text
+            .replace(/^```html\s*/i, "")
+            .replace(/^```\s*/i, "")
+            .replace(/\s*```$/i, "")
+            .trim();
 
-        if (!jsonContent.html) {
-            throw new Error("AI failed to generate HTML content for the resume.");
+        if (!htmlContent || !htmlContent.includes("<html")) {
+            throw new Error("AI failed to generate valid HTML content for the resume.");
         }
 
-        const pdfBuffer = await generatePdfFromHtml(jsonContent.html);
+        const pdfBuffer = await generatePdfFromHtml(htmlContent);
         return pdfBuffer;
     } catch (error) {
         console.error("Error in generateResumePdf service:", error);
